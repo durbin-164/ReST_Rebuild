@@ -329,7 +329,9 @@ class Tracklet():
         g_tID_pred = self.graph.ndata['tID_pred']
         nxg = dgl.to_networkx(
             self.graph.cpu(), node_attrs=['fID'], edge_attrs=['y_pred']
+            # self.graph.cpu(), node_attrs=['tID_pred'], edge_attrs=['y_pred']
         ).to_undirected()  # node_attrs=['tID_pred'], edge_attrs=['y_pred']
+
         if self.cfg.OUTPUT.VISUALIZE:
             save_graph(self.cfg,
                        nxg,

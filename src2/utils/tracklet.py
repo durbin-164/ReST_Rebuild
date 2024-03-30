@@ -12,6 +12,8 @@ import networkx as nx
 
 import torch
 
+from src2.utils.memory_id_assignment import MemoryBuffer
+
 # for visualization
 COLORS = [[39, 188, 221], [167, 72, 214], [82, 67, 198], [76, 198, 232],
           [137, 24, 13], [142, 31, 221], [47, 196, 154], [40, 110, 201],
@@ -24,18 +26,18 @@ COLORS = [[39, 188, 221], [167, 72, 214], [82, 67, 198], [76, 198, 232],
 
 
 def save_graph(cfg, graph, file_name, now=None):
-    #initialze Figure
+    # initialze Figure
     plt.figure(num=None, figsize=(20, 20), dpi=80)
     plt.axis('off')
     fig = plt.figure(1)
     pos = nx.spring_layout(graph, weight='y_pred')
 
     ## Spatial Grpha (colored by tID)
-    # groups = set(nx.get_node_attributes(graph,'tID').values())
-    # mapping = dict(zip(sorted(groups),count()))
-    # nodes = graph.nodes()
-    # colors = [mapping[graph.nodes[n]['tID']] for n in nodes]
-    # nx.draw_networkx_nodes(graph, pos, nodelist=nodes, node_color=colors, cmap=plt.cm.jet)
+    groups = set(nx.get_node_attributes(graph, 'tID').values())
+    mapping = dict(zip(sorted(groups), count()))
+    nodes = graph.nodes()
+    colors = [mapping[graph.nodes[n]['tID']] for n in nodes]
+    nx.draw_networkx_nodes(graph, pos, nodelist=nodes, node_color=colors, cmap=plt.cm.jet)
 
     ## Temporal Graph (colored by fID)
     nodes = graph.nodes()
@@ -50,7 +52,6 @@ def save_graph(cfg, graph, file_name, now=None):
                            nodelist=nodes,
                            node_color=colors,
                            cmap=plt.cm.jet)
-
 
     nx.draw_networkx_edges(graph, pos)
     nx.draw_networkx_labels(graph, pos)
@@ -67,6 +68,8 @@ class Tracklet():
         self.graph = None
         self.y_pred = None
         self.newID = 0
+        self.memory_buffer = MemoryBuffer()
+        self.start = True
 
     def inference(self, time, graph, y_pred, mode):
         self.time = time
@@ -88,7 +91,6 @@ class Tracklet():
             graph = self.aggregating_tg()
 
         return graph
-
 
     def remove_edge(self):
         if self.graph is None or self.y_pred is None:
@@ -116,7 +118,7 @@ class Tracklet():
             else:
                 edge_set.add((f, t))
                 edge_set.add((t, f))
-        # logger.info(f'Removed {len(rm_li)} multi-edges. Graph: {g.num_nodes()} nodes, {g.num_edges()} edges.')
+        logger.info(f'Removed {len(rm_li)} multi-edges. Graph: {g.num_nodes()} nodes, {g.num_edges()} edges.')
         g.remove_edges(rm_li)
 
     def postprocessing_sg(self):
@@ -243,8 +245,11 @@ class Tracklet():
         return len(rm_li), again
 
     def aggregating_sg(self):
+        # nxg = dgl.to_networkx(self.graph.cpu(),
+        #                       node_attrs=['tID']).to_undirected()
+
         nxg = dgl.to_networkx(self.graph.cpu(),
-                              node_attrs=['tID']).to_undirected()
+                              node_attrs=['cID']).to_undirected()
 
         # visualize graph
         # save_graph(self.cfg, nxg, os.path.join(self.outpu_dir,'visualize', f'cluster_{self.time}.png'), now=self.time+self.cfg.TEST.FRAME_START)
@@ -264,31 +269,48 @@ class Tracklet():
         projs = torch.zeros(n_node, 3, dtype=torch.float32)
         velocitys = torch.zeros(n_node, 2, dtype=torch.float32)
         tIDs_pred = torch.zeros(n_node, 1, dtype=torch.int16)
+        bboxs = torch.zeros(n_node, 4, dtype=torch.int16)
+
         self.bboxs = []
+        self.feats_embed = []
 
         for i, cc in enumerate(nx.connected_components(nxg)):
             ccli = list(cc)
+            ccli_0 = ccli[0] if len(ccli) == 1 or g_cID[ccli[0]] == 0 else ccli[1]
+
             fIDs[i] = self.time + self.cfg.TEST.FRAME_START
             feats[i] = torch.mean(g_feat[ccli], 0)
             projs[i] = torch.mean(g_proj[ccli], 0)
             tIDs_pred[i] = -1
+            bboxs[i] = g_bbox[ccli_0]
 
             # save bbox and cID for inference
             tmp_li = []
+            tmp_embed = []
             for node in ccli:
                 tmp_li.append([
                     g_cID[node].item(),
                     [g_bbox[node][i].item() for i in range(4)]
                 ])
+
+                tmp_embed.append((
+                    self.graph.ndata['fID'][node].item(),
+                    g_cID[node].item(),
+                    self.graph.ndata['feat'][node]
+                ))
+
             self.bboxs.append(tmp_li)
+            self.feats_embed.append(tmp_embed)
 
         nodes_attr = {
             'fID': fIDs.to(self.device),  # current time
             'feat': feats.to(self.device),  # mean feature of all nodes
             'proj': projs.to(self.device),  # mean projection of all nodes
             'velocity':
-            velocitys.to(self.device),  # init v of spatial node to 0
-            'tID_pred': tIDs_pred.to(self.device)  # initialize for inference
+                velocitys.to(self.device),  # init v of spatial node to 0
+            'tID_pred': tIDs_pred.to(self.device),  # initialize for inference
+            'bbox': bboxs.to(self.device)
+
         }
 
         # create SG(node-only)
@@ -328,8 +350,8 @@ class Tracklet():
     def assign_ID(self):
         g_tID_pred = self.graph.ndata['tID_pred']
         nxg = dgl.to_networkx(
-            # self.graph.cpu(), node_attrs=['fID'], edge_attrs=['y_pred']
-            self.graph.cpu(), node_attrs=['tID_pred'], edge_attrs=['y_pred']
+            self.graph.cpu(), node_attrs=['fID'], edge_attrs=['y_pred']
+            # self.graph.cpu(), node_attrs=['tID_pred'], edge_attrs=['y_pred']
         ).to_undirected()  # node_attrs=['tID_pred'], edge_attrs=['y_pred']
 
         # if self.cfg.OUTPUT.VISUALIZE:
@@ -340,18 +362,43 @@ class Tracklet():
         #                now=self.time + self.cfg.TEST.FRAME_START)
 
         # g_fID = self.graph.ndata['fID']
+        unassigned_nodes = []
+        assigned_labels = []
         for i, cc in enumerate(nx.connected_components(nxg)):
             nodes = list(cc)
             labeled_nodes = torch.where(
                 g_tID_pred[nodes] != -1)[0]  # return list of index
             if len(labeled_nodes) > 0:
                 label = copy.deepcopy(
-                    g_tID_pred[nodes[labeled_nodes[0]]])
+                    g_tID_pred[nodes[labeled_nodes[0]]]).item()
                 self.graph.ndata['tID_pred'][nodes] = label
-            else:
+                self.memory_buffer.update(self.feats_embed, nodes, label)
+                assigned_labels.append(label)
+            elif self.start:
                 label = self.newID
                 self.graph.ndata['tID_pred'][nodes] = label
                 self.newID += 1
+                self.memory_buffer.update(self.feats_embed, nodes, label)
+            else:
+                unassigned_nodes.append(nodes)
+
+        if unassigned_nodes:
+            new_assigned_nodes_label, new_unassigned_nodes = self.memory_buffer.get_existing_node_ids(
+                self.feats_embed, unassigned_nodes, assigned_labels
+            )
+            for nodes, label in new_assigned_nodes_label.items():
+                nodes = list(nodes)
+                self.graph.ndata['tID_pred'][nodes] = label
+                self.memory_buffer.update(self.feats_embed, nodes, label)
+
+            for nodes in new_unassigned_nodes:
+                nodes = list(nodes)
+                label = self.newID
+                self.graph.ndata['tID_pred'][nodes] = label
+                self.newID += 1
+                self.memory_buffer.update(self.feats_embed, nodes, label)
+
+        self.start = False
 
     def write_infer_file(self):
         if self.time == 0:
@@ -361,7 +408,7 @@ class Tracklet():
             'conf', 'x', 'y', 'z'
         ]
         if self.cfg.DATASET.NAME == 'Wildtrack':
-            frame = f'0000{(self.time + self.cfg.TEST.FRAME_START)*5:04d}'
+            frame = f'0000{(self.time + self.cfg.TEST.FRAME_START) * 5:04d}'
         else:
             frame = f'{self.time + self.cfg.TEST.FRAME_START:4d}'
         current_fID = self.time + self.cfg.TEST.FRAME_START
@@ -374,7 +421,7 @@ class Tracklet():
             dfs.append(pd.DataFrame(columns=attr))
 
         for n in range(self.graph.num_nodes()):
-            if g_fID[n] != current_fID:  # online method, only preocess current nodes
+            if g_fID[n] != current_fID:  # online method, only process current nodes
                 continue
             for i in range(len(self.bboxs[n])):
                 x, y, w, h = self.bboxs[n][i][1]
@@ -407,6 +454,7 @@ class Tracklet():
         g_proj = self.graph.ndata['proj']
         g_fID = self.graph.ndata['fID']
         g_tIDpred = self.graph.ndata['tID_pred']
+        g_bbox = self.graph.ndata['bbox']
 
         n_node = 0
         for i, cc in enumerate(nx.connected_components(nxg)):
@@ -416,9 +464,11 @@ class Tracklet():
         projs = torch.zeros(n_node, 3, dtype=torch.float32)
         tIDs_pred = torch.zeros(n_node, 1, dtype=torch.int16)
         velocitys = torch.zeros(n_node, 2, dtype=torch.float32)
+        bboxs = torch.zeros(n_node, 4, dtype=torch.int16)
 
         for i, cc in enumerate(nx.connected_components(nxg)):
             ccli = list(cc)
+            ccli_0 = max(ccli)
             if len(ccli) == 1:  # no match now
                 fIDs[i] = g_fID[ccli[0]]
             else:
@@ -426,6 +476,7 @@ class Tracklet():
                     i] = self.time + self.cfg.TEST.FRAME_START  # successful match, update time
             feats[i] = torch.mean(g_feat[ccli], 0)
             projs[i] = torch.mean(g_proj[ccli], 0)
+            bboxs[i] = g_bbox[ccli_0]
             tIDs_pred[i] = g_tIDpred[ccli][0].item()
             if len(ccli) == 2:
                 _pre, _now = -1, -1
@@ -442,7 +493,8 @@ class Tracklet():
             'feat': feats.to(self.device),  # mean feature of all nodes
             'proj': projs.to(self.device),  # mean projection of all nodes
             'velocity': velocitys.to(self.device),  # velocity
-            'tID_pred': tIDs_pred.to(self.device)  # initialize for inference
+            'tID_pred': tIDs_pred.to(self.device),  # initialize for inference
+            'bbox': bboxs.to(self.device)
         }
 
         # create pre-TG(node-only)
@@ -478,7 +530,7 @@ class Tracklet():
                 ca = self.bboxs[n][i][0]
                 cam_nodes[ca].append([x, y, w, h, tID, proj])
 
-        # bird_view = np.zeros((1080, 1920, 3))
+        bird_view = np.zeros((1080, 1920, 3))
 
         for cam in range(c.CAMS):
             frame_img = os.path.join(c.DIR, c.NAME, c.SEQUENCE[0],
@@ -494,21 +546,21 @@ class Tracklet():
                 cv2.rectangle(
                     img, (int(bbox[0]), int(bbox[1])),
                     (int(bbox[0]) + int(bbox[2]), int(bbox[1]) + int(bbox[3])),
-                    color, 5)  #2
+                    color, 5)  # 2
                 cv2.rectangle(img, (int(bbox[0]) - 5, int(bbox[1]) - 40),
-                              (int(bbox[0]) + 60, int(bbox[1])), color, -1)  #2
+                              (int(bbox[0]) + 60, int(bbox[1])), color, -1)  # 2
                 cv2.putText(img, f'{tID_pred.item()}',
                             (int(bbox[0]), int(bbox[1]) - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 2,
                             cv2.LINE_AA)
 
                 # bird view visualization
-                # bird_view = cv2.circle(bird_view, ((int(proj[0])+1200)//2, int(proj[1])-140), 22, color, -1)
+                bird_view = cv2.circle(bird_view, ((int(proj[0]) + 1200) // 2, int(proj[1]) - 140), 22, color, -1)
 
             cv2.imwrite(os.path.join(output_dir, f'c{cam}/{frame}.jpg'), img)
 
         # bird view visualization
-        # path = os.path.join(output_dir, 'bird_view')
-        # if not os.path.exists(path):
-        #     os.makedirs(path)
-        # cv2.imwrite(os.path.join(path, f'{frame}.jpg'), bird_view)
+        path = os.path.join(output_dir, 'bird_view')
+        if not os.path.exists(path):
+            os.makedirs(path)
+        cv2.imwrite(os.path.join(path, f'{frame}.jpg'), bird_view)

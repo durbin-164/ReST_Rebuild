@@ -8,6 +8,7 @@ import dgl
 from torchreid.reid.utils import FeatureExtractor
 from .models import NodeFeatureEncoder, EdgeFeatureEncoder, EdgePredictor, MPN  # , FeatureExtractor
 from .datasets.dataset import BaseGraphDataset
+from .utils.iou_calculation import calculate_iou_for_lists
 from .utils.tools import *
 from .utils.tracklet import Tracklet
 
@@ -81,7 +82,7 @@ class Tracker:
 
             ckpt = torch.load(self.cfg.TEST.CKPT_FILE_TG)
             self.TG = {'node_feature_encoder': NodeFeatureEncoder(self.cfg, in_dim=516),
-                       'edge_feature_encoder': EdgeFeatureEncoder(self.cfg, in_dim=6),
+                       'edge_feature_encoder': EdgeFeatureEncoder(self.cfg, in_dim=7),
                        'mpn': MPN(self.cfg),
                        'predictor': EdgePredictor(self.cfg)}
             self.TG['node_feature_encoder'].load_state_dict(ckpt['node_feature_encoder'])
@@ -347,6 +348,7 @@ class Tracker:
         reid_feature = TG.ndata['feat']
         projs = TG.ndata['proj']
         velocitys = TG.ndata['velocity']
+        boxes = TG.ndata['bbox']
         g_cID = torch.ones(g_fID.shape).cuda()
         node_feature = torch.cat((reid_feature, projs, g_cID), 1)  # 516 d
 
@@ -360,6 +362,7 @@ class Tracker:
             torch.pairwise_distance(projs[u, :2], projs[v, :2], p=2).to(self.device),
             torch.pairwise_distance(velocitys[u, :2], velocitys[v, :2], p=1).to(self.device),
             torch.pairwise_distance(velocitys[u, :2], velocitys[v, :2], p=2).to(self.device),
+            calculate_iou_for_lists(boxes[u], boxes[v]).to(self.device)
         )).T
         TG.edata['embed'] = edge_feature
 

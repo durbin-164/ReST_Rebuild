@@ -1,5 +1,7 @@
 import os.path as osp
 import json
+import random
+
 import cv2
 import copy
 from loguru import logger
@@ -10,6 +12,11 @@ import torch
 from torchvision import transforms as T
 from torch.utils.data import Dataset
 import torch.nn.functional as F
+import torchvision.ops as ops
+
+from ..utils.iou_calculation import calculate_iou_for_lists
+
+calculate_iou_for_lists
 
 
 class BaseGraphDataset(Dataset):
@@ -202,7 +209,7 @@ class BaseGraphDataset(Dataset):
         g = copy.deepcopy(self.chunks[index])
 
         # Data Augmentation of SG: randomly rm few cams nodes
-        aug_dataset = ['Wildtrack', 'CAMPUS', 'PETS09', 'CityFlow']
+        aug_dataset = ['Wildtrack', 'CAMPUS', 'PETS09', 'CityFlow', 'basketball']
         DN = self.cfg.DATASET.NAME
         if self.cfg.SOLVER.TYPE == 'SG' and DN in aug_dataset:
             if DN == 'Wildtrack':
@@ -212,6 +219,11 @@ class BaseGraphDataset(Dataset):
             c = torch.randint(self.cfg.DATASET.CAMS, (num_rm,))
             for i in range(num_rm):
                 li = torch.where(g.ndata['cID']==int(c[i]))[0]
+                if DN == 'basketball':
+                    li_l = li.tolist()
+                    random.shuffle(li_l)
+                    li_l = li_l[: len(li_l)//2]
+                    li = torch.tensor(li_l)
                 g.remove_nodes(list(li))
 
         # add edge
@@ -236,6 +248,9 @@ class BaseGraphDataset(Dataset):
 
         reid_feature = g.ndata['feat']
         projs = g.ndata['proj']
+        boxes = g.ndata['bbox']
+
+
         if self.cfg.SOLVER.TYPE == 'SG':
             node_feature = reid_feature
         else:
@@ -259,7 +274,8 @@ class BaseGraphDataset(Dataset):
                 torch.pairwise_distance(projs[u, :2], projs[v, :2], p=2).to(self.device),
                 torch.pairwise_distance(velocitys[u, :2], velocitys[v, :2], p=1).to(self.device),
                 torch.pairwise_distance(velocitys[u, :2], velocitys[v, :2], p=2).to(self.device),
-            )).T # (E, 6)
+                calculate_iou_for_lists(boxes[u], boxes[v]).to(self.device)
+            )).T # (E, 7)
         g.edata['embed'] = edge_feature
 
         # Groundtruth y label (E, 1)
