@@ -27,7 +27,7 @@ class EdgeFeatureEncoder(nn.Module):
         super(EdgeFeatureEncoder, self).__init__()
         if in_dim is None:
             # 6: add velocity feature
-            in_dim = 6 if cfg.SOLVER.TYPE == 'TG' else 4
+            in_dim = 7 if cfg.SOLVER.TYPE == 'TG' else 4
         self.layer = nn.Sequential(
             nn.Linear(in_dim, 8),
             nn.ReLU(),
