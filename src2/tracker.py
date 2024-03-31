@@ -27,6 +27,7 @@ class Tracker:
         # self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.min_loss = 1e8
+        self.n_cams = cfg.DATASET.CAMS
 
         if self.cfg.FE.CHOICE == 'CNN':
             # Default ReID model, OS-Net here
@@ -82,7 +83,7 @@ class Tracker:
 
             ckpt = torch.load(self.cfg.TEST.CKPT_FILE_TG)
             self.TG = {'node_feature_encoder': NodeFeatureEncoder(self.cfg, in_dim=516),
-                       'edge_feature_encoder': EdgeFeatureEncoder(self.cfg, in_dim=7),
+                       'edge_feature_encoder': EdgeFeatureEncoder(self.cfg, in_dim=6),
                        'mpn': MPN(self.cfg),
                        'predictor': EdgePredictor(self.cfg)}
             self.TG['node_feature_encoder'].load_state_dict(ckpt['node_feature_encoder'])
@@ -286,7 +287,7 @@ class Tracker:
 
             if self.cfg.OUTPUT.LOG:
                 logger.opt(ansi=True).info(f'<fg 255,204,0>Iteration {i}: Spatial Graph done.' +
-                                           f'SG: {SG.num_nodes()} nodes and {SG.num_edges()} edges.</fg 255,204,0>')
+                                           f'SG: {SG[0].num_nodes()} nodes and {SG[0].num_edges()} edges.</fg 255,204,0>')
 
             """ Temporal Graph
                 Input: SG at time i, TG at time i-1
@@ -294,19 +295,24 @@ class Tracker:
             """
             if i > 0:
                 # Add edge (both input graphs are node-only)
-                TG, node_feature, edge_feature = self.reconfiguration(pre_TG, SG)
+                y_pred_list = []
+                TG_list = []
+                for c in range(self.n_cams):
+                    TG, node_feature, edge_feature = self.reconfiguration(pre_TG[c], SG[c])
 
-                # Run Temporal Graph
-                x_node = self.TG['node_feature_encoder'](node_feature)
-                x_edge = self.TG['edge_feature_encoder'](edge_feature)
-                for _ in range(max_passing_steps):
-                    x_node, x_edge = self.TG['mpn'](TG, x_node, x_edge)  # node: 32D, edge: 6D
+                    # Run Temporal Graph
+                    x_node = self.TG['node_feature_encoder'](node_feature)
+                    x_edge = self.TG['edge_feature_encoder'](edge_feature)
+                    for _ in range(max_passing_steps):
+                        x_node, x_edge = self.TG['mpn'](TG, x_node, x_edge)  # node: 32D, edge: 6D
 
-                y_pred = self.TG['predictor'](x_edge)
+                    y_pred = self.TG['predictor'](x_edge)
+                    y_pred_list.append(y_pred)
+                    TG_list.append(TG)
 
                 # Post-processing
-                TG = self.tracklet.inference(i, TG, y_pred, 'TG')  # post-processing
-                pre_TG = TG
+                TG_list = self.tracklet.inference(i, TG_list, y_pred_list, 'TG')  # post-processing
+                pre_TG = TG_list
 
                 if self.cfg.OUTPUT.VISUALIZE:
                     self.tracklet.visualize(i, visualize_output_dir)
@@ -362,7 +368,7 @@ class Tracker:
             torch.pairwise_distance(projs[u, :2], projs[v, :2], p=2).to(self.device),
             torch.pairwise_distance(velocitys[u, :2], velocitys[v, :2], p=1).to(self.device),
             torch.pairwise_distance(velocitys[u, :2], velocitys[v, :2], p=2).to(self.device),
-            calculate_iou_for_lists(boxes[u], boxes[v]).to(self.device)
+            # calculate_iou_for_lists(boxes[u], boxes[v]).to(self.device)
         )).T
         TG.edata['embed'] = edge_feature
 
