@@ -1,0 +1,61 @@
+MODEL:
+  DEVICE: "cuda"
+  DEVICE_ID: ('0')
+  MODE: 'test'
+  DETECTION: 'gt' # {'gt' | 'MVDeTr'}
+  RESUME: false
+#  LAST_CKPT_FILE: './logs/Wildtrack_sequence1_SG_epoch92_train90.pth'
+  LAST_CKPT_FILE: './logs/Wildtrack_sequence1_TG_epoch72_train90.pth'
+
+DATASET:
+  DIR: './datasets/'
+  NAME: 'basketball'
+  SEQUENCE: ['sequence1']
+  CAMS: 2
+  TOTAL_FRAMES: 3600
+
+FE: # Feature Extractor
+  CHOICE: 'CNN'
+  INPUT_SIZE: (256, 128)
+
+SOLVER:
+  TYPE: 'TG' # {'SG': Spatial Graph, 'TG': Temporal Graph}
+  EPOCHS: 101
+  EVAL_EPOCH: 2
+  EVAL_EPOCH_MOT: 1
+  BATCH_SIZE: 128
+  LR: 0.007 # Learning Rate
+  MAX_PASSING_STEPS: 4
+  W: 3 # Temporal Window Size
+  W_TEST: 5
+  FOCAL_ALPHA: 0.98
+  FOCAL_GAMMA: 5
+
+OUTPUT:
+  VISUALIZE: True
+  LOG: True
+  CKPT_DIR: './logs/ckpts'
+  INFERENCE_DIR: './logs/inference'
+
+TEST:
+  # 7 feature
+#  CKPT_FILE_SG: './logs/ckpts/train-basketball-sequence1-SG-1711491252/basketball_sequence1_SG_epoch14.pth'
+#  CKPT_FILE_TG: './logs/ckpts/train-basketball-sequence1-TG-1711787863/basketball_sequence1_TG_epoch10.pth'
+#  CKPT_FILE_SG: './logs/Wildtrack_sequence1_SG_epoch92_train90.pth'
+#  CKPT_FILE_TG: './logs/Wildtrack_sequence1_TG_epoch72_train90.pth'
+
+  # 6 feature
+  CKPT_FILE_SG: './logs/ckpts/train-basketball-sequence1-SG-1711491252/basketball_sequence1_SG_epoch14.pth'
+  CKPT_FILE_TG: './logs/ckpts/train-basketball-sequence1-TG-1711522640/basketball_sequence1_TG_epoch46.pth'
+#  FRAME_START: 3240
+  FRAME_START: 0
+  EDGE_THRESH: 0.90
+
+
+  #very good
+#  CKPT_FILE_SG: './logs/ckpts/train-basketball-sequence1-SG-1711129577/basketball_sequence1_SG_epoch42.pth'
+#  CKPT_FILE_TG: './logs/ckpts/train-basketball-sequence1-TG-1711194695/basketball_sequence1_TG_epoch12.pth'
+
+# full with edge feature 6
+#  CKPT_FILE_SG: './logs/ckpts/train-basketball-sequence1-SG-1711491252/basketball_sequence1_SG_epoch14.pth'
+#  CKPT_FILE_TG: './logs/ckpts/train-basketball-sequence1-TG-1711522640/basketball_sequence1_TG_epoch46.pth'
